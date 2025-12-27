@@ -1,0 +1,32 @@
+{
+    "name": "pumpfun-swap-module",
+    "version": "1.0.0",
+    "description": "Professional OOP-based PumpFun and Jito Swap Module",
+    "main": "dist/index.js",
+    "scripts": {
+        "build": "tsc",
+        "start": "node dist/index.js",
+        "dev": "ts-node src/index.ts"
+    },
+    "keywords": [
+        "solana",
+        "pumpfun",
+        "jito",
+        "trading",
+        "bot"
+    ],
+    "author": "Your Name",
+    "license": "ISC",
+    "dependencies": {
+        "@solana/web3.js": "^1.91.0",
+        "bs58": "^5.0.0",
+        "dotenv": "^16.4.5",
+        "node-fetch": "^2.7.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.12.7",
+        "@types/node-fetch": "^2.6.11",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.4.5"
+    }
+}
