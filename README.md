@@ -11,10 +11,10 @@ A professional, object-oriented TypeScript module for programmatically trading t
 
 - **⚡ Fast & Efficient**: Optimized for speed with low-latency execution.
 - **🛡️ Jito Bundle Support**: detailed integration with Jito Block Engine to bypass network congestion and avoid MEV sandwich attacks.
-- **🔄 Complete Trading Suite**: Support for `Buy`, `Sell`, and `SellAll` operations.
-- **⚙️ Configurable**: Easy customization of slippage, priority fees, and Jito tip amounts per transaction.
-- **🏗️ OOP Design**: Clean Class-based architecture for easy integration into larger bot frameworks.
-- **🔐 Secure**: Local keypair management with environment variable support.
+- **📊 Smart Priority Fees**: Automatically calculates fees based on the 75th percentile of network load to ensure transaction confirmation.
+- **🔄 Auto-Retry Mechanism**: Built-in exponential backoff to handle network failures gracefully.
+- **🔌 Wallet Agnostic**: Implement `IWallet` to use any wallet strategy (Keypair, Ledger, etc.).
+- **⚙️ Configurable**: Easy customization of slippage, dynamic fees, and Jito tip amounts.
 
 ## ❓ Why Use This SDK?
 
@@ -59,12 +59,20 @@ First, import the `PumpFunSwap` class and initialize it with your configuration.
 
 ```typescript
 import { PumpFunSwap } from './src/core/PumpFunSwap';
+import { Keypair } from '@solana/web3.js';
+import bs58 from 'bs58';
 import dotenv from 'dotenv';
+// Your Wallet Implementation (see index.ts for NodeWallet example)
+import { NodeWallet } from './src/index'; 
+
 dotenv.config();
+
+const keypair = Keypair.fromSecretKey(bs58.decode(process.env.PRIVATE_KEY!));
+const wallet = new NodeWallet(keypair);
 
 const trader = new PumpFunSwap({
     rpcUrl: process.env.HELIUS_RPC_URL!,
-    privateKey: process.env.PRIVATE_KEY!
+    wallet: wallet
 });
 ```
 
@@ -77,7 +85,9 @@ const result = await trader.buy({
     mint: "Token_CA_Address_Here",
     amount: 0.1,          // Amount in SOL
     slippagePct: 2,       // 2% Slippage
-    priorityFee: 0.0001   // Standard Priority Fee
+    priorityFee: 0.0001,  // Fixed Fee (Fallback)
+    dynamicFee: true,     // ✅ Enable Auto Fee Estimation
+    maxPriorityFee: 0.01  // ✅ Max Spend Cap
 });
 
 if (result.success) {
