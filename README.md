@@ -1,8 +1,9 @@
-# 🚀 Solana PumpFun Swap Module
+# 🚀 Solana PumpFun Swap SDK (Trading Bot & Jito Integration)
+> **The ultimate TypeScript module for Pump.fun trading, sniping, and selling with built-in Jito MEV Protection.**
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)](https://www.typescriptlang.org/)
 [![Solana](https://img.shields.io/badge/Solana-Web3.js-black.svg)](https://solana.com/)
-[![License](https://img.shields.io/badge/License-ISC-green.svg)](https://opensource.org/licenses/ISC)
+[![Jito](https://img.shields.io/badge/MEV-Protected-red.svg)](https://jito.wtf/)
 
 A professional, object-oriented TypeScript module for programmatically trading tokens on **Pump.fun**. This module supports standard transactions and **Jito Bundles** for MEV protection and faster execution.
 
@@ -14,6 +15,14 @@ A professional, object-oriented TypeScript module for programmatically trading t
 - **⚙️ Configurable**: Easy customization of slippage, priority fees, and Jito tip amounts per transaction.
 - **🏗️ OOP Design**: Clean Class-based architecture for easy integration into larger bot frameworks.
 - **🔐 Secure**: Local keypair management with environment variable support.
+
+## ❓ Why Use This SDK?
+
+Unlike basic scripts, this module is engineered for **reliability** and **speed**:
+
+* **🚫 Anti-MEV / Anti-Sandwich:** By using Jito Bundles, your transactions bypass the public mempool, making it impossible for bots to front-run or sandwich your trades.
+* **⚡ High-Frequency Friendly:** The `PumpFunSwap` class is persistent, meaning you don't reconnect to RPC for every trade. Perfect for **sniping bots**.
+* **🧩 Plug-and-Play:** Designed as a drop-in module for any Telegram Bot, Web App, or CLI tool.
 
 ---
 
@@ -145,9 +154,22 @@ npm run build
 npm start
 ```
 
+## ⭐ Support
+
+If you found this module helpful, please **give it a Star**! 🌟
+It helps others find this repo and motivates me to add new features (like Jupiter support).
+
 ## 📜 License
 
 This project is licensed under the **ISC License**.
+
+## 🔧 Common Issues & Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `Simulation Error` | Not enough SOL or Slippage too low. | Increase `slippagePct` or ensure you have SOL for gas + rent. |
+| `Jito Bundle Dropped` | Tip too low during congestion. | Increase `jitoTipSol` (e.g., to 0.005) during high volume. |
+| `401 Unauthorized` | Invalid API Key or RPC URL. | Check your `.env` file and verify RPC subscription. |
 
 ## ⚠️ Disclaimer
 
