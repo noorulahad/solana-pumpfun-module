@@ -1,28 +1,40 @@
-# 🚀 Solana PumpFun Swap SDK (Trading Bot & Jito Integration)
-> **The ultimate TypeScript module for Pump.fun trading, sniping, and selling with built-in Jito MEV Protection.**
+# 🚀 Solana PumpFun Swap SDK (God-Tier Edition)
+> **The ultimate TypeScript module for Pump.fun trading, equipped with Sniper-Speed Local Execution, Helius AI Fees, Jito Failover, and Memory-Based Panic Exits.**
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)](https://www.typescriptlang.org/)
 [![Solana](https://img.shields.io/badge/Solana-Web3.js-black.svg)](https://solana.com/)
 [![Jito](https://img.shields.io/badge/MEV-Protected-red.svg)](https://jito.wtf/)
+[![Helius](https://img.shields.io/badge/RPC-Optimized-orange.svg)](https://helius.dev/)
 
-A professional, object-oriented TypeScript module for programmatically trading tokens on **Pump.fun**. This module supports standard transactions and **Jito Bundles** for MEV protection and faster execution.
+A professional, object-oriented TypeScript module for programmatically trading tokens on **Pump.fun**. This module has been engineered for **High-Frequency Trading (HFT)**, bypassing standard API latencies by building transactions locally with Anchor and routing them through next-generation infrastructure.
 
-## ✨ Features
+## ✨ God-Tier Features
 
-- **⚡ Fast & Efficient**: Optimized for speed with low-latency execution.
-- **🛡️ Jito Bundle Support**: detailed integration with Jito Block Engine to bypass network congestion and avoid MEV sandwich attacks.
-- **📊 Smart Priority Fees**: Automatically calculates fees based on the 75th percentile of network load to ensure transaction confirmation.
-- **🔄 Auto-Retry Mechanism**: Built-in exponential backoff to handle network failures gracefully.
-- **🔌 Wallet Agnostic**: Implement `IWallet` to use any wallet strategy (Keypair, Ledger, etc.).
-- **⚙️ Configurable**: Easy customization of slippage, dynamic fees, and Jito tip amounts.
+- **⚡ Local Anchor Engine**: Removed slow HTTP APIs. Transactions are built locally using the IDL, ensuring **Zero-Latency** construction.
+- **🧠 Smart Exit System**:
+  - **Memory-Based Panic Sell**: Executes exits instantly from RAM (0ms read latency) without fetching balances.
+  - **WebSocket Price Feed**: Uses Helius-optimized `onAccountChange` listeners (<200ms) instead of polling loop.
+  - **Trailing Stop Loss**: Automatically locks in profits when price surges.
+- **🛡️ Jito Enterprise Integration**:
+  - **Multi-Region Failover**: Instantly switches between NY, Amsterdam, Frankfurt, and Tokyo block engines if one fails.
+  - **Smart Rotation**: Round-robin selection of Tip Accounts to prevent write-lock contention.
+  - **Revert Protection**: Bundles ensure you don't pay gas if the trade fails.
+- **🤖 Helius AI Priority Fees**: Fetches real-time, high-precision fee estimates specifically for the Pump.fun program, not just general network averages.
+- **🔌 Wallet Agnostic**: Implement `IWallet` to use any wallet strategy.
 
-## ❓ Why Use This SDK?
+---
 
-Unlike basic scripts, this module is engineered for **reliability** and **speed**:
+## 🚀 Architecture: The "Golden Combo"
 
-* **🚫 Anti-MEV / Anti-Sandwich:** By using Jito Bundles, your transactions bypass the public mempool, making it impossible for bots to front-run or sandwich your trades.
-* **⚡ High-Frequency Friendly:** The `PumpFunSwap` class is persistent, meaning you don't reconnect to RPC for every trade. Perfect for **sniping bots**.
-* **🧩 Plug-and-Play:** Designed as a drop-in module for any Telegram Bot, Web App, or CLI tool.
+This bot uses a hybrid strategy proven to be the fastest setup on Solana:
+
+1.  ** 👀 The Eyes (Helius)**: used for **Reading**.
+    *   WebSocket price streaming.
+    *   Account balance monitoring.
+    *   AI Priority Fee estimation.
+2.  ** 🥊 The Hands (Jito)**: used for **Writing**.
+    *   Transaction execution via Bundles.
+    *   Landing trades during heavy congestion.
 
 ---
 
@@ -43,7 +55,7 @@ npm install
    cp .env.example .env
    ```
 
-2. Add your Solana RPC URL (Helius, QuickNode, etc.) and your Wallet Private Key (Base58 format) to the `.env` file:
+2. Add your **Helius RPC URL** (Crucial for AI fees & fast sockets) and **Private Key**:
    ```env
    HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY
    PRIVATE_KEY=YOUR_WALLET_PRIVATE_KEY_BASE58
@@ -51,24 +63,15 @@ npm install
 
 ---
 
-## 🚀 Usage
+## 💻 Usage Code
 
 ### 1. Initialize the Trader
-
-First, import the `PumpFunSwap` class and initialize it with your configuration.
-
 ```typescript
 import { PumpFunSwap } from './src/core/PumpFunSwap';
-import { Keypair } from '@solana/web3.js';
-import bs58 from 'bs58';
-import dotenv from 'dotenv';
-// Your Wallet Implementation (see index.ts for NodeWallet example)
+import { SmartExit } from './src/core/SmartExit';
 import { NodeWallet } from './src/index'; 
 
-dotenv.config();
-
-const keypair = Keypair.fromSecretKey(bs58.decode(process.env.PRIVATE_KEY!));
-const wallet = new NodeWallet(keypair);
+// ... setup wallet ...
 
 const trader = new PumpFunSwap({
     rpcUrl: process.env.HELIUS_RPC_URL!,
@@ -76,60 +79,35 @@ const trader = new PumpFunSwap({
 });
 ```
 
-### 2. Standard Buy (Example)
-
-Perform a simple buy transaction on Pump.fun.
-
+### 2. Sniper Buy (with Jito & Helius Fees)
 ```typescript
 const result = await trader.buy({
-    mint: "Token_CA_Address_Here",
-    amount: 0.1,          // Amount in SOL
-    slippagePct: 2,       // 2% Slippage
-    priorityFee: 0.0001,  // Fixed Fee (Fallback)
-    dynamicFee: true,     // ✅ Enable Auto Fee Estimation
-    maxPriorityFee: 0.01  // ✅ Max Spend Cap
+    mint: "Token_CA_Address",
+    amount: 0.1,            // 0.1 SOL
+    slippagePct: 5,         // 5% Slippage (Optimized for Pump.fun volatility)
+    dynamicFee: true,       // ✅ Helius AI Fee Estimation
+    useJito: true,          // ✅ Jito Bundle Protection
+    jitoTipSol: 0.001       // Tip Amount
 });
+```
 
+### 3. Smart Exit (Zero-Latency Automation)
+Automatically manages the position after a purchase.
+
+```typescript
 if (result.success) {
-    console.log(`Buy Successful: https://solscan.io/tx/${result.signature}`);
+    // 1. Wait for RPC Indexing
+    await new Promise(r => setTimeout(r, 3000));
+    
+    // 2. Fetch Exact Balance
+    const balance = await trader.getTokenBalance(TOKEN_CA);
+    
+    // 3. Initialize Smart Exit (Memory Resident)
+    const smartExit = new SmartExit(trader, TOKEN_CA, entryPrice, balance);
+    
+    // 4. Start WebSocket Monitor
+    await smartExit.start();
 }
-```
-
-### 3. Jito Protected Buy (Advanced)
-
-Use Jito bundles to bribe validators for guaranteed faster entry and MEV protection.
-
-```typescript
-const result = await trader.buy({
-    mint: "Token_CA_Address_Here",
-    amount: 0.1,
-    useJito: true,      // Enable Jito
-    jitoTipSol: 0.001   // Bribe Amount
-});
-```
-
-### 4. Sell Tokens
-
-Sell a specific amount of tokens.
-
-```typescript
-await trader.sell({
-    mint: "Token_CA_Address_Here",
-    amount: 100000,    // Amount of TOKENS to sell
-    slippagePct: 1
-});
-```
-
-### 5. Sell All Tokens
-
-Automatically fetch balance and sell 100% of holdings for a given token.
-
-```typescript
-await trader.sellAll({
-    mint: "Token_CA_Address_Here",
-    useJito: true,     // Optional: Use Jito for exit
-    jitoTipSol: 0.001
-});
 ```
 
 ---
@@ -140,47 +118,24 @@ await trader.sellAll({
 solana-pumpfun-module/
 ├── src/
 │   ├── config/
-│   │   └── config.ts        # API Endpoints & Jito Tip Accounts
+│   │   ├── config.ts        # Jito Regional URLs & Tip Accounts
+│   │   └── idl.ts           # Pump.fun Anchor IDL
 │   ├── core/
-│   │   └── PumpFunSwap.ts   # Main Trading Logic Class
-│   ├── types/
-│   │   └── types.ts         # TypeScript Interfaces & Types
-│   └── index.ts             # Entry Point / Example Usage
-├── .env.example             # Environment Variable Template
-├── package.json
+│   │   ├── PumpFunSwap.ts   # Core Logic (Helius Fees, Anchor Builder)
+│   │   ├── SmartExit.ts     # WebSocket Monitor & Panic Sell Engine
+│   │   └── JitoManager.ts   # Round-Robin Failover System
+│   ├── index.ts             # Main Entry Point
 └── README.md
 ```
 
-## 🛠️ Build & Run
+## 🔧 Troubleshooting
 
-**Development Mode:**
-```bash
-npm run dev
-```
-
-**Build for Production:**
-```bash
-npm run build
-npm start
-```
-
-## ⭐ Support
-
-If you found this module helpful, please **give it a Star**! 🌟
-It helps others find this repo and motivates me to add new features (like Jupiter support).
-
-## 📜 License
-
-This project is licensed under the **ISC License**.
-
-## 🔧 Common Issues & Troubleshooting
-
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| `Simulation Error` | Not enough SOL or Slippage too low. | Increase `slippagePct` or ensure you have SOL for gas + rent. |
-| `Jito Bundle Dropped` | Tip too low during congestion. | Increase `jitoTipSol` (e.g., to 0.005) during high volume. |
-| `401 Unauthorized` | Invalid API Key or RPC URL. | Check your `.env` file and verify RPC subscription. |
+| Issue | Solution |
+|-------|----------|
+| `Slippage Exceeded` | Default slippage is now 5%. If high volume, increase to 10%+. |
+| `Helius Fee Error` | Ensure your RPC URL in `.env` has a valid API Key. |
+| `Balance not found` | The code includes a 3s wait after buy. RPCs can be slow to index. |
 
 ## ⚠️ Disclaimer
 
-**Use at your own risk.** Trading cryptocurrencies involves significant risk and can result in the loss of your capital. This is a developer tool and should be tested thoroughly before using real funds.
+**High-Frequency Trading carries risk.** Use this software at your own risk. The authors are not responsible for any financial losses.

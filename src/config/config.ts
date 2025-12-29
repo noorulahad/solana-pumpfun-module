@@ -1,8 +1,14 @@
 // config.ts
 import { PublicKey } from '@solana/web3.js';
 
-export const PUMP_PORTAL_API = "https://pumpportal.fun/api/trade-local";
-export const JITO_BLOCK_ENGINE_URL = "https://mainnet.block-engine.jito.wtf/api/v1/bundles";
+// export const PUMP_PORTAL_API = "https://pumpportal.fun/api/trade-local"; // Deprecated
+export const JITO_BLOCK_ENGINE_URLS = [
+    "https://mainnet.block-engine.jito.wtf/api/v1/bundles",      // Default (Global)
+    "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles", // EU (Amsterdam)
+    "https://frankfurt.mainnet.block-engine.jito.wtf/api/v1/bundles", // EU (Frankfurt)
+    "https://ny.mainnet.block-engine.jito.wtf/api/v1/bundles",        // US (New York)
+    "https://tokyo.mainnet.block-engine.jito.wtf/api/v1/bundles"      // Asia (Tokyo)
+];
 
 // Updated list of Jito Tip Accounts
 export const JITO_TIP_ACCOUNTS = [

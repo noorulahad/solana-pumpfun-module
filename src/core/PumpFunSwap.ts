@@ -1,17 +1,25 @@
 // PumpFunSwap.ts
-import { Connection, VersionedTransaction, PublicKey, SystemProgram, TransactionMessage } from '@solana/web3.js';
-import fetch from 'node-fetch';
+import { Connection, VersionedTransaction, PublicKey, SystemProgram, TransactionMessage, Keypair, LAMPORTS_PER_SOL, ComputeBudgetProgram } from '@solana/web3.js';
+import { Program, AnchorProvider, Idl, BN, Wallet } from '@project-serum/anchor';
+import { IDL, PUMP_PROGRAM_ID } from '../config/idl';
+import { getAssociatedTokenAddress, ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import bs58 from 'bs58';
 import { SwapConfig, TradeOptions, TradeResult, TradeAction, IWallet } from '../types/types';
-import { PUMP_PORTAL_API, JITO_BLOCK_ENGINE_URL, getRandomJitoAccount } from '../config/config';
+import { JitoManager } from './JitoManager';
+// import { JITO_BLOCK_ENGINE_URLS, getRandomJitoAccount } from '../config/config'; // Moved logic to JitoManager
 
 // Helper to pause execution
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+const GLOBAL_STATE_SEED = "global";
+const BONDING_CURVE_SEED = "bonding-curve";
+const FEE_RECIPIENT = new PublicKey("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM");
+
 export class PumpFunSwap {
     private connection: Connection;
     private wallet: IWallet;
-    private apiKey?: string;
+    private provider: AnchorProvider;
+    private program: Program;
 
     constructor(config: SwapConfig) {
         if (!config.rpcUrl || !config.wallet) {
@@ -19,7 +27,16 @@ export class PumpFunSwap {
         }
         this.connection = new Connection(config.rpcUrl, "confirmed");
         this.wallet = config.wallet;
-        this.apiKey = config.apiKey;
+
+        // Initialize Anchor Provider
+        this.provider = new AnchorProvider(
+            this.connection,
+            this.wallet as unknown as Wallet,
+            { commitment: "confirmed", preflightCommitment: "confirmed" }
+        );
+
+        // Initialize Program
+        this.program = new Program(IDL as Idl, PUMP_PROGRAM_ID, this.provider);
 
         console.log(`🚀 PumpFunSwap Initialized for: ${this.wallet.publicKey.toBase58()}`);
     }
@@ -66,18 +83,18 @@ export class PumpFunSwap {
                 // Try executing the trade
                 const result = await this.executeTrade(action, options);
 
-                // Agar success ho gaya, return immediately
+                // If successful, return immediately
                 if (result.success) {
                     return result;
                 }
 
-                // Agar fail hua, check karo ke retry karna chahiye ya nahi
+                // If failed, check if we should retry
                 if (attempt >= maxRetries) {
                     console.error(`❌ Max retries (${maxRetries}) reached. Last Error: ${result.error}`);
                     return result; // Return the last failure
                 }
 
-                // FATAL ERROR CHECK: Agar paise hi nahi hain, to retry mat karo
+                // FATAL ERROR CHECK: If insufficient funds, do not retry
                 if (result.error && this.isFatalError(result.error)) {
                     console.error(`⛔ Fatal Error (No Retry): ${result.error}`);
                     return result;
@@ -92,7 +109,7 @@ export class PumpFunSwap {
                 attempt++;
 
             } catch (unexpectedError: any) {
-                // Ye catch block tab chalega agar executeTrade crash ho jaye (unlikely handled inside)
+                // This catch block executes if executeTrade crashes (unlikely handled inside)
                 console.error(`🚨 Unexpected Crash:`, unexpectedError);
                 if (attempt >= maxRetries) return { success: false, error: unexpectedError.message, mode: options.useJito ? "Jito" : "Standard" };
                 attempt++;
@@ -124,60 +141,59 @@ export class PumpFunSwap {
     private async getPriorityFee(options: TradeOptions): Promise<number> {
         const { priorityFee = 0.0001, dynamicFee = false, maxPriorityFee = 0.01 } = options;
 
-        // Agar dynamic fee OFF hai, to fixed value return karo
+        // If dynamic fee is OFF, return fixed value
         if (!dynamicFee) {
             return priorityFee;
         }
 
-        console.log("📊 Calculating Dynamic Priority Fee...");
+        console.log("📊 Calculating Dynamic Priority Fee (via Helius AI)...");
 
         try {
-            // 1. Get recent fees from RPC (looks at last 150 blocks)
-            const recentFees = await this.connection.getRecentPrioritizationFees();
+            // ⚡ USE HELIUS SPECIFIC API (Much more accurate than getRecentPrioritizationFees)
+            // WE are using the connection endpoint which should have the API Key
+            const response = await fetch(this.connection.rpcEndpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: 'helius-fee',
+                    method: 'getPriorityFeeEstimate',
+                    params: [{
+                        accountKeys: [PUMP_PROGRAM_ID], // Monitor the Pump.fun program specifically
+                        options: {
+                            includeAllPriorityFeeLevels: true
+                        }
+                    }]
+                }),
+            });
 
-            if (recentFees.length === 0) {
-                console.warn("⚠️ No recent fees found, defaulting to fixed.");
-                return priorityFee;
+            const data: any = await response.json();
+
+            if (data.result?.priorityFeeEstimate) {
+                // Helius returns levels: 'min', 'low', 'medium', 'high', 'veryHigh', 'unsafeMax'
+                // For sniping/trading, we usually want 'high' or 'veryHigh'
+                const recommendedFeeMicroLamports = data.result.priorityFeeEstimate.veryHigh;
+
+                // Convert microLamports to SOL
+                // 1 SOL = 10^15 microLamports (approx calculation for unit price vs total fee)
+                // Note: Helius returns 'microLamports per Compute Unit'.
+
+                const ESTIMATED_CU = 200_000;
+                const feeInMicroLamports = recommendedFeeMicroLamports * ESTIMATED_CU;
+                const feeInSol = feeInMicroLamports / 1_000_000_000_000_000;
+
+                console.log(`⚡ Helius AI Fee Estimate: ${feeInSol.toFixed(9)} SOL`);
+
+                // Apply Cap
+                return Math.min(feeInSol, maxPriorityFee);
             }
 
-            // 2. Sort fees (Highest to Lowest) to find the market rate
-            // Note: API returns fee in 'microLamports' per Compute Unit
-            const sortedFees = recentFees
-                .map(x => x.prioritizationFee)
-                .filter(x => x > 0)
-                .sort((a, b) => b - a);
-
-            if (sortedFees.length === 0) return priorityFee;
-
-            // 3. Strategy: Take the 75th percentile (Top 25% of the market)
-            // Ye ensure karta hai ke hum cheap users se upar hon
-            const index = Math.floor(sortedFees.length * 0.25);
-            const highPriorityMicroLamports = sortedFees[index];
-
-            // 4. Estimate Compute Units (Standard Swap ~ 200,000 CU max)
-            const ESTIMATED_CU = 200_000;
-
-            // Formula: (MicroLamportsPerCU * CU) -> MicroLamports -> Lamports -> SOL
-            // 1 SOL = 10^9 Lamports
-            // 1 Lamport = 10^6 MicroLamports
-            // Total: 1 SOL = 10^15 MicroLamports
-
-            const feeInMicroLamports = highPriorityMicroLamports * ESTIMATED_CU;
-            let feeInSol = feeInMicroLamports / 1_000_000_000_000_000; // Divide by 10^15
-
-            // Safety Buffer (Multiply by 1.2x for fluctuation)
-            feeInSol = feeInSol * 1.2;
-
-            // 5. Apply Safety Caps
-            // Agar fee bohot kam hai (0.000001), to minimum 0.0001 rakho
-            // Agar fee bohot zyada hai (User cap), to limit lagao
-            const finalFee = Math.min(Math.max(feeInSol, 0.0001), maxPriorityFee);
-
-            console.log(`⚡ Dynamic Fee Calculated: ${finalFee.toFixed(6)} SOL (Based on Network Load)`);
-            return finalFee;
+            console.warn("⚠️ Helius API didn't return estimate, falling back.");
+            return priorityFee;
 
         } catch (error) {
-            console.error("⚠️ Failed to estimate fee, using default:", error);
+            console.error("⚠️ Helius Fee Error:", error);
+            // Fallback to standard logic if Helius fails? Or just return default
             return priorityFee;
         }
     }
@@ -186,7 +202,7 @@ export class PumpFunSwap {
         // Step 1: Calculate Fee (Dynamic or Fixed)
         const calculatedPriorityFee = await this.getPriorityFee(options);
 
-        const { mint, amount, slippagePct = 1, useJito = false, jitoTipSol = 0.001 } = options;
+        const { mint, amount, slippagePct = 5, useJito = false, jitoTipSol = 0.001 } = options;
 
         console.log(`\n🔄 Processing ${action.toUpperCase()} | Mint: ${mint} | Amt: ${amount} | Fee: ${calculatedPriorityFee} SOL`);
 
@@ -216,34 +232,150 @@ export class PumpFunSwap {
         }
     }
 
-    private async buildSwapTransaction(action: TradeAction, mint: string, amount: number, slippage: number, priorityFee: number): Promise<VersionedTransaction> {
-        const isSolInput = action === "buy";
-        const payload: any = {
-            publicKey: this.wallet.publicKey.toBase58(),
-            action,
+    private async buildSwapTransaction(action: TradeAction, mintStr: string, amountInput: number, slippagePct: number, priorityFee: number): Promise<VersionedTransaction> {
+        const mint = new PublicKey(mintStr);
+        const user = this.wallet.publicKey;
+
+        // 1. Get derived addresses
+        const bondingCurve = PublicKey.findProgramAddressSync(
+            [Buffer.from(BONDING_CURVE_SEED), mint.toBuffer()],
+            this.program.programId
+        )[0];
+
+        const associatedBondingCurve = await getAssociatedTokenAddress(
             mint,
-            denominatedInSol: isSolInput ? "true" : "false",
-            amount,
-            slippage,
-            priorityFee,
-            pool: "pump"
-        };
-        if (this.apiKey) payload.apiKey = this.apiKey;
+            bondingCurve,
+            true
+        );
 
-        const response = await fetch(PUMP_PORTAL_API, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
+        const associatedUser = await getAssociatedTokenAddress(
+            mint,
+            user,
+            false
+        );
 
-        if (response.status !== 200) {
-            const err = await response.text();
-            throw new Error(`PumpPortal API Error: ${err}`);
+        // 2. Fetch Bonding Curve State for Calculations
+        // We need this to calculate the correct token amount for buys (if input is SOL) 
+        // or SOL amount for sells. (Hindi: or SOL amount for sells.)
+        const curveState: any = await this.program.account.bondingCurve.fetch(bondingCurve);
+
+        // Calculate Amounts
+        let tokenAmount: BN;
+        let maxSolCost: BN | undefined;
+        let minSolOutput: BN | undefined;
+
+        if (action === "buy") {
+            // Input 'amountInput' is SOL. We need to find how many tokens we get.
+            const solAmountPoints = new BN(amountInput * LAMPORTS_PER_SOL);
+
+            // Formula: tokens = virtualTokens - (K / (virtualSol + solIn))
+            // K = virtualSol * virtualTokens
+            const virtualSolReserves = curveState.virtualSolReserves;
+            const virtualTokenReserves = curveState.virtualTokenReserves;
+
+            const K = virtualSolReserves.mul(virtualTokenReserves);
+            const newVirtualSol = virtualSolReserves.add(solAmountPoints);
+            const newVirtualTokens = K.div(newVirtualSol);
+
+            tokenAmount = virtualTokenReserves.sub(newVirtualTokens);
+
+            // Allow for slippage on the SOL cost side? 
+            // The instruction is buy(tokenAmount, maxSolCost).
+            // Usually we set maxSolCost to (InputSol * (1 + slippage)).
+            const slippageMultipler = 1 + (slippagePct / 100);
+            maxSolCost = new BN(Math.floor(amountInput * LAMPORTS_PER_SOL * slippageMultipler));
+
+        } else {
+            // Action is SELL
+            // Input 'amountInput' is Tokens. 
+            // If amountInput is float, we assume UI amount. 
+            // PumpFun tokens are 6 decimals.
+            tokenAmount = new BN(Math.floor(amountInput * 1_000_000));
+
+            // Calculate Min Sol Output
+            // solOut = (tokensIn * virtualSol) / (virtualTokens + tokensIn) ? NO, virtualTokens changes
+            // Formula: solOut = virtualSol - (K / (virtualTokens + tokensIn))
+            // Wait, standard AMM: dy = y - k/(x+dx)
+
+            const virtualSolReserves = curveState.virtualSolReserves;
+            const virtualTokenReserves = curveState.virtualTokenReserves;
+            const K = virtualSolReserves.mul(virtualTokenReserves);
+
+            const newVirtualTokens = virtualTokenReserves.add(tokenAmount);
+            const newVirtualSol = K.div(newVirtualTokens);
+
+            const solOutput = virtualSolReserves.sub(newVirtualSol);
+
+            const slippageMultipler = 1 - (slippagePct / 100);
+            minSolOutput = solOutput.mul(new BN(Math.floor(slippageMultipler * 1000))).div(new BN(1000));
         }
 
-        const buffer = await response.arrayBuffer();
-        // Return unsigned transaction
-        return VersionedTransaction.deserialize(Buffer.from(buffer));
+        // 3. Build Instruction
+        let txInstruction;
+
+        if (action === "buy") {
+            txInstruction = await this.program.methods
+                .buy(tokenAmount, maxSolCost!)
+                .accounts({
+                    global: PublicKey.findProgramAddressSync([Buffer.from(GLOBAL_STATE_SEED)], this.program.programId)[0],
+                    feeRecipient: FEE_RECIPIENT,
+                    mint: mint,
+                    bondingCurve: bondingCurve,
+                    associatedBondingCurve: associatedBondingCurve,
+                    associatedUser: associatedUser,
+                    user: user,
+                    systemProgram: SystemProgram.programId,
+                    tokenProgram: TOKEN_PROGRAM_ID,
+                    rent: new PublicKey("SysvarRent111111111111111111111111111111111"),
+                    eventAuthority: PublicKey.findProgramAddressSync([Buffer.from("__event_authority")], this.program.programId)[0],
+                    program: this.program.programId
+                })
+                .instruction();
+        } else {
+            txInstruction = await this.program.methods
+                .sell(tokenAmount, minSolOutput!)
+                .accounts({
+                    global: PublicKey.findProgramAddressSync([Buffer.from(GLOBAL_STATE_SEED)], this.program.programId)[0],
+                    feeRecipient: FEE_RECIPIENT,
+                    mint: mint,
+                    bondingCurve: bondingCurve,
+                    associatedBondingCurve: associatedBondingCurve,
+                    associatedUser: associatedUser,
+                    user: user,
+                    systemProgram: SystemProgram.programId,
+                    associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+                    tokenProgram: TOKEN_PROGRAM_ID,
+                    eventAuthority: PublicKey.findProgramAddressSync([Buffer.from("__event_authority")], this.program.programId)[0],
+                    program: this.program.programId
+                })
+                .instruction();
+        }
+
+        // 4. Create Transaction
+        const recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+
+        // Add Priority Fee
+        const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: Math.floor(priorityFee * 1_000_000_000_000_000 / 200_000) }); // Est units? better to just use microLamports param or convert
+        // options.priorityFee is in SOL.
+        // setComputeUnitPrice takes microLamports per CU.
+        // If we assumed estimated CU ~ 200k in the calc logic, we should be consistent.
+
+        // Just used the passed priority fee logic from getPriorityFee?
+        // getPriorityFee returns fee in SOL.
+        // To convert SOL fee to unit price: (SOL * 10^9 * 10^6) / CU_LIMIT
+        // 1e15 microLamports per SOL.
+        const units = 200_000; // Assumed
+        const microLamports = Math.floor((priorityFee * 1_000_000_000_000_000) / units);
+        const setComputeUnitIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports });
+        const setComputeLimitIx = ComputeBudgetProgram.setComputeUnitLimit({ units });
+
+        const messageV0 = new TransactionMessage({
+            payerKey: user,
+            recentBlockhash: recentBlockhash,
+            instructions: [setComputeUnitIx, setComputeLimitIx, txInstruction]
+        }).compileToV0Message();
+
+        return new VersionedTransaction(messageV0);
     }
 
     private async executeStandardTx(transaction: VersionedTransaction): Promise<TradeResult> {
@@ -273,7 +405,7 @@ export class PumpFunSwap {
         const sharedBlockhash = swapTx.message.recentBlockhash;
 
         // 2. Pass this blockhash to create the Tip Tx
-        // Ab dono transactions same blockhash share karengi
+        // Now both transactions will share the same blockhash
         let tipTx = await this.createJitoTipTx(tipAmt, sharedBlockhash);
 
         // 3. Sign Tip Tx
@@ -283,21 +415,8 @@ export class PumpFunSwap {
         const b58Txs = [swapTx, tipTx].map(tx => bs58.encode(tx.serialize()));
 
         try {
-            const response = await fetch(JITO_BLOCK_ENGINE_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    jsonrpc: "2.0",
-                    id: 1,
-                    method: "sendBundle",
-                    params: [b58Txs]
-                })
-            });
-
-            const result: any = await response.json();
-            if (result.error) throw new Error(`Jito Error: ${JSON.stringify(result.error)}`);
-
-            const bundleId = result.result;
+            // Use JitoManagers Intelligent Failover
+            const bundleId = await JitoManager.sendBundle(b58Txs);
             const swapSig = bs58.encode(swapTx.signatures[0]);
 
             console.log(`✅ Bundle Sent (ID: ${bundleId})`);
@@ -316,7 +435,8 @@ export class PumpFunSwap {
     }
 
     private async createJitoTipTx(amount: number, recentBlockhash: string): Promise<VersionedTransaction> {
-        const tipAccount = getRandomJitoAccount();
+        // Intelligent Rotation of Tip Accounts
+        const tipAccount = JitoManager.getNextTipAccount();
         const instruction = SystemProgram.transfer({
             fromPubkey: this.wallet.publicKey,
             toPubkey: tipAccount,
@@ -333,7 +453,86 @@ export class PumpFunSwap {
         return new VersionedTransaction(messageV0);
     }
 
-    private async getTokenBalance(mint: string): Promise<number> {
+    public getBondingCurveAddress(mintStr: string): PublicKey {
+        const mint = new PublicKey(mintStr);
+        return PublicKey.findProgramAddressSync(
+            [Buffer.from(BONDING_CURVE_SEED), mint.toBuffer()],
+            this.program.programId
+        )[0];
+    }
+
+    public onBondingCurveChange(mintStr: string, callback: (price: number) => void): number {
+        const bondingCurve = this.getBondingCurveAddress(mintStr);
+
+        const id = this.connection.onAccountChange(
+            bondingCurve,
+            (accountInfo) => {
+                // Decode account data using Anchor coder
+                // This is much faster than fetching.
+                // However, deserializing manually or using coder is needed.
+
+                try {
+                    // Manually decoding simplest structure to avoid heavy coder usage if possible?
+                    // Actually, let's use the program coder if available, or just a buffer layout.
+                    // But we already have the IDL loaded in `this.program`.
+
+                    const decoded = this.program.coder.accounts.decode(
+                        "BondingCurve",
+                        accountInfo.data
+                    );
+
+                    const vSol = decoded.virtualSolReserves;
+                    const vTokens = decoded.virtualTokenReserves;
+
+                    const solVal = vSol.toNumber();
+                    const tokenVal = vTokens.toNumber();
+                    const price = (solVal / tokenVal) * 0.001;
+
+                    callback(price);
+                } catch (e) {
+                    console.error("WebSocket Decode Error:", e);
+                }
+            },
+            "processed" // Get updates as soon as processed by validator (Fastest)
+        );
+
+        return id;
+    }
+
+    public async removeListener(id: number) {
+        await this.connection.removeAccountChangeListener(id);
+    }
+
+    public async getTokenPrice(mintStr: string): Promise<number> {
+        const mint = new PublicKey(mintStr);
+        const bondingCurve = PublicKey.findProgramAddressSync(
+            [Buffer.from(BONDING_CURVE_SEED), mint.toBuffer()],
+            this.program.programId
+        )[0];
+
+        const curveState: any = await this.program.account.bondingCurve.fetch(bondingCurve);
+
+        // Price in SOL per Token
+        // virtualSolReserves / virtualTokenReserves
+        // Adjust for decimals: 
+        // Sol has 9, Token has 6. 
+        // Price = (vSol / 1e9) / (vTokens / 1e6) = (vSol/vTokens) * 1e-3
+
+        const vSol = curveState.virtualSolReserves;
+        const vTokens = curveState.virtualTokenReserves;
+
+        // Use BN for precision or simple number for monitoring
+        // For monitoring, number is fine usually, but let's be careful with large numbers
+        const solVal = vSol.toNumber();
+        const tokenVal = vTokens.toNumber();
+
+        const priceLamportsPerMicroToken = solVal / tokenVal;
+        const priceSolPerToken = priceLamportsPerMicroToken * 0.001; // (10^6 / 10^9)
+
+        return priceSolPerToken;
+    }
+
+    public async getTokenBalance(mint: string): Promise<number> {
         try {
             const accounts = await this.connection.getParsedTokenAccountsByOwner(
                 this.wallet.publicKey,
